@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Painel de Acidentes - Joinville (Modo de Depuração)</title>
+    <title>Painel de Acidentes - Joinville</title>
 
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -34,7 +34,8 @@
     }
     .header-title h1 { margin: 0; font-size: 36px; font-weight: 700; }
     .header-title p { margin: 0; font-size: 16px; opacity: 0.8; }
-    .header-logo img { height: 60px; }
+    .header-logo img { height: 60px;             filter: brightness(0) saturate(100%) invert(100%) sepia(100%) saturate(0%) hue-rotate(288deg) brightness(102%) contrast(102%);
+}
 
     .container {
         display: flex;
@@ -68,7 +69,7 @@
     }
     .filters select, .filters input {
         padding: 12px 15px;
-        border-radius: 5px;
+        border-radius: 50px;
         border: 1px solid #ccc;
         font-size: 14px;
         width: 100%;
@@ -144,7 +145,6 @@
         }
         .header-logo img {    
             height: 40px;
-            filter: brightness(0) saturate(100%) invert(100%) sepia(0%) saturate(7475%) hue-rotate(129deg) brightness(105%) contrast(91%);
         }
     }
 </style>
