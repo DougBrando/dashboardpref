@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard de Alertas - Estilo Waze</title>
+
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            margin: 0;
+            background-color: #f5f5f5;
+            color: #333;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+        }
+        header {
+            background-color: #fff;
+            text-align: center;
+            padding: 15px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            z-index: 1000;
+        }
+        header h1 {
+            margin: 0;
+            font-size: 28px;
+            font-weight: 500;
+        }
+        .filter-bar {
+            background-color: #fff;
+            padding: 15px 20px;
+            display: flex;
+            gap: 20px;
+            justify-content: center;
+            border-bottom: 1px solid #e0e0e0;
+        }
+        .filter-bar select {
+            padding: 8px 12px;
+            border-radius: 5px;
+            border: 1px solid #ccc;
+            min-width: 200px;
+            font-size: 14px;
+        }
+        .main-content {
+            display: flex;
+            flex-grow: 1;
+            overflow: hidden;
+            padding: 20px;
+            gap: 20px;
+        }
+        .list-container {
+            flex: 1;
+            background: #fff;
+            border-radius: 8px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            overflow-y: auto;
+        }
+        #map-container {
+            flex: 2;
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+        #map {
+            width: 100%;
+            height: 100%;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        th, td {
+            padding: 12px 15px;
+            text-align: left;
+            border-bottom: 1px solid #e0e0e0;
+        }
+        th {
+            background-color: #f8f9fa;
+            font-weight: 600;
+        }
+        tbody tr:hover {
+            background-color: #f1f1f1;
+            cursor: pointer;
+        }
+        #loader {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); font-size: 22px; background: rgba(255,255,255,0.8); padding: 20px; border-radius: 10px; z-index: 2000;
+        }
+    </style>
+</head>
+<body>
+    <header><h1>Dashboard de Alertas</h1></header>
+    
+    <div class="filter-bar">
+        <select id="type-filter">
+            <option value="all">Todos os Tipos</option>
+        </select>
+        <select id="period-filter">
+            <option value="all">Todos os Períodos</option>
+        </select>
+        <select id="hour-filter">
+            <option value="all">Todas as Horas</option>
+        </select>
+    </div>
+
+    <main class="main-content">
+        <div class="list-container">
+            <table>
+                <thead>
+                    <tr>
+                        <th>#</th>
+                        <th>Rua</th>
+                        <th>Alertas</th>
+                    </tr>
+                </thead>
+                <tbody id="street-list-body"></tbody>
+            </table>
+        </div>
+        <div id="map-container">
+            <div id="map"></div>
+        </div>
+    </main>
+
+    <div id="loader">Carregando dados...</div>
+
+    <script>
+        const sheetUrl = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vTE96JPbE6kehCNC0XiHYuHcqkdtq3G9kzUGAmCCg106wDIR3zlhDJAa_mVR82dRwLUJVaJhHvriZw-/pub?gid=53056595&single=true&output=csv';
+
+        // --- Variáveis Globais ---
+        let allData = [];
+        const map = L.map('map').setView([-26.30, -48.84], 13); // Centralizado em Joinville
+        const markersLayer = L.layerGroup().addTo(map);
+        const dom = { // Referências aos elementos da página
+            loader: document.getElementById('loader'),
+            typeFilter: document.getElementById('type-filter'),
+            periodFilter: document.getElementById('period-filter'),
+            hourFilter: document.getElementById('hour-filter'),
+            streetListBody: document.getElementById('street-list-body')
+        };
+
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+        }).addTo(map);
+
+        // --- Funções de Preparação de Dados ---
+        function getDayPeriod(hour) {
+            if (hour >= 5 && hour < 12) return 'Manhã';
+            if (hour >= 12 && hour < 18) return 'Tarde';
+            if (hour >= 18 && hour < 24) return 'Noite';
+            return 'Madrugada';
+        }
+
+        function parseWKT(wkt) {
+            if (typeof wkt !== 'string' || !wkt.includes('POINT')) return null;
+            const match = wkt.match(/POINT\(([-\d\.]+) ([-\d\.]+)\)/);
+            if (match) {
+                const lon = parseFloat(match[1]);
+                const lat = parseFloat(match[2]);
+                if (!isNaN(lat) && !isNaN(lon)) return [lat, lon];
+            }
+            return null;
+        }
+
+        // --- Carregamento Inicial ---
+        fetch(sheetUrl)
+            .then(response => response.ok ? response.text() : Promise.reject('Erro ao buscar dados.'))
+            .then(csvText => {
+                const rows = csvText.trim().split('\n');
+                const headers = rows.shift().split(',').map(h => h.trim());
+                const tsIndex = headers.indexOf('ts');
+
+                allData = rows.map(rowText => {
+                    const columns = rowText.split(',');
+                    const dataObject = {};
+                    headers.forEach((h, i) => { dataObject[h] = columns[i] ? columns[i].trim() : ''; });
+
+                    // Criar e adicionar os campos de tempo derivados
+                    const date = new Date(dataObject.ts);
+                    if (!isNaN(date)) {
+                        dataObject.hour = date.getHours();
+                        dataObject.day_period = getDayPeriod(dataObject.hour);
+                    } else {
+                         dataObject.hour = null;
+                         dataObject.day_period = null;
+                    }
+                    return dataObject;
+                });
+                
+                populateFilters();
+                updateDashboard();
+                dom.loader.style.display = 'none';
+            })
+            .catch(error => {
+                dom.loader.textContent = `Erro: ${error.message}`;
+                console.error(error);
+            });
+
+        function populateFilters() {
+            const types = [...new Set(allData.map(item => item.types).filter(Boolean))].sort();
+            const periods = [...new Set(allData.map(item => item.day_period).filter(Boolean))];
+            const hours = [...new Set(allData.map(item => item.hour).filter(h => h !== null))].sort((a,b) => a-b);
+
+            types.forEach(type => dom.typeFilter.innerHTML += `<option value="${type}">${type}</option>`);
+            periods.forEach(period => dom.periodFilter.innerHTML += `<option value="${period}">${period}</option>`);
+            hours.forEach(hour => dom.hourFilter.innerHTML += `<option value="${hour}">${String(hour).padStart(2, '0')}:00</option>`);
+        }
+
+        // --- Função Principal de Atualização ---
+        function updateDashboard() {
+            markersLayer.clearLayers();
+            dom.streetListBody.innerHTML = '';
+
+            const selectedType = dom.typeFilter.value;
+            const selectedPeriod = dom.periodFilter.value;
+            const selectedHour = dom.hourFilter.value;
+
+            // 1. Filtrar os dados
+            const filteredData = allData.filter(item => {
+                const typeMatch = selectedType === 'all' || item.types === selectedType;
+                const periodMatch = selectedPeriod === 'all' || item.day_period === selectedPeriod;
+                const hourMatch = selectedHour === 'all' || item.hour == selectedHour;
+                return typeMatch && periodMatch && hourMatch;
+            });
+            
+            const streetData = {};
+
+            // 2. Plotar no mapa e agregar dados das ruas
+            filteredData.forEach(item => {
+                const coords = parseWKT(item.geo);
+                if (coords) {
+                    L.marker(coords).addTo(markersLayer)
+                        .bindPopup(`<b>${item.types}</b><br>${item.street || 'N/A'}`);
+                    
+                    if (item.street) {
+                        if (!streetData[item.street]) {
+                            streetData[item.street] = { count: 0, coords: coords };
+                        }
+                        streetData[item.street].count++;
+                    }
+                }
+            });
+
+            // 3. Ordenar e exibir a lista de ruas
+            const sortedStreets = Object.entries(streetData)
+                .sort(([,a],[,b]) => b.count - a.count)
+                .slice(0, 40); // Limita a 40 ruas
+
+            sortedStreets.forEach(([street, data], index) => {
+                const row = document.createElement('tr');
+                row.innerHTML = `<td>${index + 1}.</td><td>${street}</td><td>${data.count}</td>`;
+                row.onclick = () => map.flyTo(data.coords, 16); // Voa para a coordenada da rua ao clicar
+                dom.streetListBody.appendChild(row);
+            });
+        }
+        
+        // --- Event Listeners para os Filtros ---
+        dom.typeFilter.addEventListener('change', updateDashboard);
+        dom.periodFilter.addEventListener('change', updateDashboard);
+        dom.hourFilter.addEventListener('change', updateDashboard);
+    </script>
+</body>
+</html>
